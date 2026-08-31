@@ -1,0 +1,9 @@
+spring:
+  application:
+    name: workflow
+  datasource:
+    url: jdbc:sqlite:${WORKFLOW_DB:workflow.db}?journal_mode=WAL&busy_timeout=5000
+    driver-class-name: org.sqlite.JDBC
+    hikari:
+      # SQLite serialises writes; a small pool avoids pointless SQLITE_BUSY contention.
+      maximum-pool-size: 4
