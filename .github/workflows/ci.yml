@@ -49,3 +49,34 @@ jobs:
       - name: Stop container
         if: always()
         run: docker rm -f smoke || true
+
+  smoke-test-postgres:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker compose --profile postgres up -d --build
+      - name: Wait for the app to accept requests
+        run: |
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/runs/smoke-check || true)
+            if [ "$code" = "404" ]; then
+              echo "up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "app did not become ready in time"
+          docker compose --profile postgres logs
+          exit 1
+      - name: Register a workflow end to end
+        run: |
+          status=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8080/workflows \
+            -H "Content-Type: application/json" \
+            -d '{"workflowName":"smoke","steps":[{"stepId":"a","priority":1,"maxAttempts":1,"dependencies":[]}]}')
+          test "$status" = "201"
+      - name: Compose logs
+        if: always()
+        run: docker compose --profile postgres logs
+      - name: Tear down
+        if: always()
+        run: docker compose --profile postgres down -v
