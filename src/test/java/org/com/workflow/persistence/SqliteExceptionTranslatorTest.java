@@ -48,4 +48,16 @@ class SqliteExceptionTranslatorTest {
 
         assertThat(translated).isNull();
     }
+
+    @Test
+    void delegatesAConstraintViolationWithNoMessageRatherThanNpeing() {
+        // getMessage() can legitimately return null; the short-circuit && must stop before
+        // calling .contains() on it.
+        SQLException noMessage = new SQLException(null, null, 19);
+
+        DataAccessException translated =
+                translator.translate("insert", "INSERT INTO workflow_run ...", noMessage);
+
+        assertThat(translated).isNull();
+    }
 }
