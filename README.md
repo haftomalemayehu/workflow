@@ -227,7 +227,7 @@ tested directly and why swapping the repository for PostgreSQL leaves them untou
 
 ## Tests
 
-`./mvnw test` runs 80 tests:
+`./mvnw test` runs 98 tests:
 
 - **Unit, no Spring context** — the seven registration failures including two- and three-node
   cycles; transitive blocked propagation and un-blocking on retry; claim ordering and every
@@ -245,6 +245,15 @@ The guards were mutation-tested: removing the compare-and-swap, the block on per
 status, or the SQLite exception translator each makes a specific test fail. Worth knowing that the
 concurrency tests prove the *transaction* boundary, not the CAS — SQLite serializes writers, so the
 CAS only becomes load-bearing on PostgreSQL and is covered separately at the repository level.
+
+A JaCoCo pass closed most of what it found, including two branches real SQLite can't produce on its
+own — `startRun`'s duplicate-key race and a step's compare-and-swap losing mid-`claim()` — by mocking
+the repositories, same reasoning as the CAS point above. Three spots are left uncovered on purpose
+rather than padded with tests: `WorkflowApplication.main()` boots the real Spring context, which
+isn't a unit test's job; `WorkflowSchedulerService`'s `switch (result)` has an unreachable branch
+that's the Java compiler's own exhaustiveness guard for the two-constant `StepResult` enum; and
+`JdbcWorkflowDefinitionRepository.findByName`'s `found == null` check guards a `COUNT(*)` result that
+SQL structurally never returns as null.
 
 Every step transition is also written to `step_attempt_event`, an append-only log, so a run's
 history can be replayed:
