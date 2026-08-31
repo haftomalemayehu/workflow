@@ -66,6 +66,43 @@ malformed request, `404` for an unknown workflow or run, and `409` for a well-fo
 lost a race — wrong worker, wrong attempt number, or a step that is not currently `in_progress`.
 A `409` tells a client to re-read state rather than fix its payload.
 
+## Project layout
+
+```
+domain/       pure scheduling rules, no Spring and no SQL
+              WorkflowValidator  registration rules + Kahn's cycle detection
+              RunPlanner         blocked derivation, claim selection, run status
+              DependencyGraph    the edges of one workflow
+persistence/  JdbcTemplate repositories; the claim compare-and-swap lives here
+service/      WorkflowSchedulerService — the five operations, one transaction each
+api/          controllers, request/response payloads, ProblemDetail mapping
+```
+
+The scheduling decisions are pure functions over a run's step instances, which is why they can be
+tested directly and why swapping the repository for PostgreSQL leaves them untouched.
+
+## Tests
+
+`./mvnw test` runs 58 tests:
+
+- **Unit, no Spring context** — the seven registration failures including two- and three-node
+  cycles; transitive blocked propagation and un-blocking on retry; claim ordering and every
+  runnable-condition guard; run-status aggregation including the parallel-branch case.
+- **Integration, real SQLite in a JUnit `@TempDir`** — a fresh database file per test, including
+  the exact scenario from the exercise brief asserted output by output.
+- **HTTP** — the status-code contract, particularly the 400 / 404 / 409 split.
+
+Every step transition is also written to `step_attempt_event`, an append-only log, so a run's
+history can be replayed:
+
+```
+load-model       1  claimed    worker-a
+load-model       1  succeeded  worker-a
+validate-schema  1  claimed    worker-a
+validate-schema  1  failed     worker-a
+validate-schema  2  claimed    worker-b
+```
+
 ## Assumptions
 
 - **Workers are trusted** to complete only the attempts they hold. The `workerId` and

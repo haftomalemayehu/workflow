@@ -7,3 +7,8 @@ spring:
     hikari:
       # SQLite serialises writes; a small pool avoids pointless SQLITE_BUSY contention.
       maximum-pool-size: 4
+  sql:
+    init:
+      # SQLite is not one of Boot's recognised embedded databases, so schema.sql would be skipped
+      # by the default "embedded" mode. The script is idempotent (CREATE TABLE IF NOT EXISTS).
+      mode: always
