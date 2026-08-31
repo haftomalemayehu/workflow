@@ -1,0 +1,200 @@
+{
+  "info": {
+    "_postman_id": "7feba7ee-17e9-4b1c-a557-f52ea2bdae78",
+    "name": "Workflow Scheduler",
+    "description": "Walks the `model-publish` scenario from the README end to end: register a workflow, start a run, claim and complete steps, and read the run summary. Also includes the 404/409 error examples. Run the requests top to bottom — \"Start a run\" captures `runId` into a collection variable that the rest reuse.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "baseUrl", "value": "http://localhost:8080", "type": "string"},
+    {"key": "runId", "value": "", "type": "string"}
+  ],
+  "item": [
+    {
+      "name": "1. Register workflow",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"workflowName\": \"model-publish\",\n  \"steps\": [\n    {\"stepId\": \"load-model\", \"priority\": 10, \"maxAttempts\": 1, \"dependencies\": []},\n    {\"stepId\": \"validate-schema\", \"priority\": 9, \"maxAttempts\": 2, \"dependencies\": [\"load-model\"]},\n    {\"stepId\": \"write-audit\", \"priority\": 5, \"maxAttempts\": 1, \"dependencies\": [\"load-model\"]}\n  ]\n}"
+        },
+        "url": {"raw": "{{baseUrl}}/workflows", "host": ["{{baseUrl}}"], "path": ["workflows"]}
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('workflow registered (201)', () => pm.response.to.have.status(201));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Start a run",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"requestId\": \"req-1001\"\n}"
+        },
+        "url": {"raw": "{{baseUrl}}/workflows/model-publish/runs", "host": ["{{baseUrl}}"], "path": ["workflows", "model-publish", "runs"]}
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('run created (201)', () => pm.response.to.have.status(201));",
+              "const body = pm.response.json();",
+              "pm.collectionVariables.set('runId', body.runId);",
+              "pm.test('runStatus is running', () => pm.expect(body.runStatus).to.eql('running'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Claim runnable steps",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"workerId\": \"worker-a\",\n  \"maxCount\": 2\n}"
+        },
+        "url": {"raw": "{{baseUrl}}/runs/{{runId}}/claims", "host": ["{{baseUrl}}"], "path": ["runs", "{{runId}}", "claims"]}
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const steps = pm.response.json();",
+              "pm.test('only load-model is runnable', () => {",
+              "  pm.expect(steps).to.have.lengthOf(1);",
+              "  pm.expect(steps[0].stepId).to.eql('load-model');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Complete load-model",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"workerId\": \"worker-a\",\n  \"attemptNumber\": 1,\n  \"result\": \"success\"\n}"
+        },
+        "url": {"raw": "{{baseUrl}}/runs/{{runId}}/steps/load-model/complete", "host": ["{{baseUrl}}"], "path": ["runs", "{{runId}}", "steps", "load-model", "complete"]}
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('completed (200)', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Claim again (now unblocked)",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"workerId\": \"worker-a\",\n  \"maxCount\": 2\n}"
+        },
+        "url": {"raw": "{{baseUrl}}/runs/{{runId}}/claims", "host": ["{{baseUrl}}"], "path": ["runs", "{{runId}}", "claims"]}
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const steps = pm.response.json();",
+              "pm.test('validate-schema and write-audit are both runnable', () => {",
+              "  pm.expect(steps.map(s => s.stepId)).to.have.members(['validate-schema', 'write-audit']);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Run summary",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {"raw": "{{baseUrl}}/runs/{{runId}}", "host": ["{{baseUrl}}"], "path": ["runs", "{{runId}}"]}
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('ok (200)', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error — 404 unknown run",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {"raw": "{{baseUrl}}/runs/does-not-exist", "host": ["{{baseUrl}}"], "path": ["runs", "does-not-exist"]}
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('not found (404)', () => pm.response.to.have.status(404));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error — 409 wrong worker",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"workerId\": \"worker-b\",\n  \"attemptNumber\": 1,\n  \"result\": \"success\"\n}"
+        },
+        "url": {"raw": "{{baseUrl}}/runs/{{runId}}/steps/validate-schema/complete", "host": ["{{baseUrl}}"], "path": ["runs", "{{runId}}", "steps", "validate-schema", "complete"]}
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('conflict (409)', () => pm.response.to.have.status(409));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

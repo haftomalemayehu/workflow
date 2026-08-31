@@ -51,6 +51,117 @@ The database file defaults to `workflow.db` in the working directory. Override i
 WORKFLOW_DB=/tmp/scheduler.db ./mvnw spring-boot:run
 ```
 
+## Try it with curl
+
+With the service running on `:8080`, walk one run end to end. This is the `model-publish` workflow
+used in the test suite: `load-model` runs first, then `validate-schema` and `write-audit` become
+runnable — and claimable together — once it succeeds.
+
+**1. Register the workflow**
+
+```bash
+curl -i -X POST localhost:8080/workflows \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workflowName": "model-publish",
+    "steps": [
+      {"stepId": "load-model", "priority": 10, "maxAttempts": 1, "dependencies": []},
+      {"stepId": "validate-schema", "priority": 9, "maxAttempts": 2, "dependencies": ["load-model"]},
+      {"stepId": "write-audit", "priority": 5, "maxAttempts": 1, "dependencies": ["load-model"]}
+    ]
+  }'
+# HTTP/1.1 201
+```
+
+**2. Start a run.** Starting is idempotent by `requestId` — replaying the same `requestId` returns
+the existing run with `200` instead of `201`, and never creates a second one.
+
+```bash
+curl -i -X POST localhost:8080/workflows/model-publish/runs \
+  -H "Content-Type: application/json" \
+  -d '{"requestId": "req-1001"}'
+# HTTP/1.1 201
+# {"runId":"c1bbd4cb-e97d-44a0-b328-8c5dc98be1bf","workflowName":"model-publish","runStatus":"running"}
+```
+
+Save the `runId` from the response for the remaining calls:
+
+```bash
+RUN_ID=c1bbd4cb-e97d-44a0-b328-8c5dc98be1bf
+```
+
+**3. Claim runnable steps.** Only `load-model` is runnable at first — the other two are blocked on
+it, so the claim only returns one step even though `maxCount` allows two.
+
+```bash
+curl -i -X POST localhost:8080/runs/$RUN_ID/claims \
+  -H "Content-Type: application/json" \
+  -d '{"workerId": "worker-a", "maxCount": 2}'
+# HTTP/1.1 200
+# [{"stepId":"load-model","attemptNumber":1}]
+```
+
+**4. Complete the claimed attempt**, matching the `workerId` and `attemptNumber` from the claim.
+
+```bash
+curl -i -X POST localhost:8080/runs/$RUN_ID/steps/load-model/complete \
+  -H "Content-Type: application/json" \
+  -d '{"workerId": "worker-a", "attemptNumber": 1, "result": "success"}'
+# HTTP/1.1 200
+```
+
+**5. Claim again.** `validate-schema` and `write-audit` are unblocked now and come back together,
+ordered by priority.
+
+```bash
+curl -i -X POST localhost:8080/runs/$RUN_ID/claims \
+  -H "Content-Type: application/json" \
+  -d '{"workerId": "worker-a", "maxCount": 2}'
+# HTTP/1.1 200
+# [{"stepId":"validate-schema","attemptNumber":1},{"stepId":"write-audit","attemptNumber":1}]
+```
+
+**6. Read the run summary** at any point:
+
+```bash
+curl -i localhost:8080/runs/$RUN_ID
+# HTTP/1.1 200
+# {"runId":"c1bbd4cb-e97d-44a0-b328-8c5dc98be1bf","workflowName":"model-publish","runStatus":"running",
+#  "steps":[{"stepId":"load-model","status":"succeeded","attemptCount":1,"lastWorkerId":"worker-a"},
+#           {"stepId":"validate-schema","status":"pending","attemptCount":0,"lastWorkerId":null},
+#           {"stepId":"write-audit","status":"pending","attemptCount":0,"lastWorkerId":null}]}
+```
+
+### Error responses
+
+Every error is an RFC 9457 `ProblemDetail`. An unknown run is a `404`:
+
+```bash
+curl -i localhost:8080/runs/does-not-exist
+# HTTP/1.1 404
+# {"detail":"unknown runId 'does-not-exist'","instance":"/runs/does-not-exist","status":404,"title":"Not found"}
+```
+
+Completing an attempt with the wrong `workerId` is a `409` — the request was well-formed but lost a
+race, so the client should re-read state rather than retry the same body:
+
+```bash
+curl -i -X POST localhost:8080/runs/$RUN_ID/steps/validate-schema/complete \
+  -H "Content-Type: application/json" \
+  -d '{"workerId": "worker-b", "attemptNumber": 1, "result": "success"}'
+# HTTP/1.1 409
+# {"detail":"step 'validate-schema' is held by a different worker", ...}
+```
+
+Prefer a client over raw curl? The same scenario, including the error examples, is available as:
+
+- **[`docs/http/workflow-scheduler.http`](docs/http/workflow-scheduler.http)** — run directly from
+  IntelliJ's built-in HTTP client, or with the VS Code "REST Client" extension.
+- **[`docs/postman/workflow-scheduler.postman_collection.json`](docs/postman/workflow-scheduler.postman_collection.json)**
+  — import into Postman (or run headlessly with `newman run docs/postman/workflow-scheduler.postman_collection.json`).
+  Requests are numbered in the order they're meant to run; each captures `runId` from the
+  start-run response for the ones after it.
+
 ## API
 
 | Method | Path | Purpose |

@@ -1,0 +1,103 @@
+# Workflow Scheduler — HTTP client requests
+#
+# Runnable directly in IntelliJ's built-in HTTP client, or with the VS Code "REST Client"
+# extension. Start the service first (see README, "Running it"), then run the requests in
+# order — the ### separators mark each request and `runId` is captured from the start-run
+# response and reused by the rest.
+#
+# This walks the same `model-publish` scenario as the README's curl walkthrough:
+# load-model runs first, then validate-schema and write-audit become runnable once it succeeds.
+
+@baseUrl = http://localhost:8080
+
+### 1. Register the workflow
+POST {{baseUrl}}/workflows
+Content-Type: application/json
+
+{
+  "workflowName": "model-publish",
+  "steps": [
+    {"stepId": "load-model", "priority": 10, "maxAttempts": 1, "dependencies": []},
+    {"stepId": "validate-schema", "priority": 9, "maxAttempts": 2, "dependencies": ["load-model"]},
+    {"stepId": "write-audit", "priority": 5, "maxAttempts": 1, "dependencies": ["load-model"]}
+  ]
+}
+
+> {%
+    client.test("registered", () => client.assert(response.status === 201, "expected 201"));
+%}
+
+### 2. Start a run (idempotent by requestId — replaying it returns 200, not 201)
+POST {{baseUrl}}/workflows/model-publish/runs
+Content-Type: application/json
+
+{
+  "requestId": "req-1001"
+}
+
+> {%
+    client.test("run created", () => client.assert(response.status === 201, "expected 201"));
+    client.global.set("runId", response.body.runId);
+%}
+
+### 3. Claim runnable steps — only load-model is unblocked at first
+POST {{baseUrl}}/runs/{{runId}}/claims
+Content-Type: application/json
+
+{
+  "workerId": "worker-a",
+  "maxCount": 2
+}
+
+> {%
+    client.test("only load-model claimed", () => {
+        client.assert(response.body.length === 1, "expected exactly one claimed step");
+        client.assert(response.body[0].stepId === "load-model", "expected load-model");
+    });
+%}
+
+### 4. Complete the claimed attempt
+POST {{baseUrl}}/runs/{{runId}}/steps/load-model/complete
+Content-Type: application/json
+
+{
+  "workerId": "worker-a",
+  "attemptNumber": 1,
+  "result": "success"
+}
+
+### 5. Claim again — validate-schema and write-audit are unblocked now
+POST {{baseUrl}}/runs/{{runId}}/claims
+Content-Type: application/json
+
+{
+  "workerId": "worker-a",
+  "maxCount": 2
+}
+
+### 6. Run summary
+GET {{baseUrl}}/runs/{{runId}}
+
+
+### --- Error responses ---
+
+### 404 — unknown run
+GET {{baseUrl}}/runs/does-not-exist
+
+> {%
+    client.test("404", () => client.assert(response.status === 404, "expected 404"));
+%}
+
+### 409 — completing with the wrong worker (a well-formed request that lost a race)
+POST {{baseUrl}}/runs/{{runId}}/steps/validate-schema/complete
+Content-Type: application/json
+
+{
+  "workerId": "worker-b",
+  "attemptNumber": 1,
+  "result": "success"
+}
+
+> {%
+    client.test("409", () => client.assert(response.status === 409, "expected 409"));
+%}
