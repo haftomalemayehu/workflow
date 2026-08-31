@@ -142,6 +142,16 @@ class WorkflowApiTest {
     }
 
     @Test
+    void returns400WhenMaxCountIsMissingEntirely() throws Exception {
+        String runId = startRun();
+
+        mockMvc.perform(post("/runs/" + runId + "/claims")
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"workerId\":\"worker-a\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void returns409WhenCompletingWithTheWrongWorker() throws Exception {
         String runId = startRun();
         mockMvc.perform(post("/runs/" + runId + "/claims").contentType(APPLICATION_JSON)
@@ -177,6 +187,32 @@ class WorkflowApiTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.detail")
                         .value(org.hamcrest.Matchers.containsString("result")));
+    }
+
+    @Test
+    void returns409WhenAttemptNumberIsMissingEntirely() throws Exception {
+        String runId = startRun();
+        mockMvc.perform(post("/runs/" + runId + "/claims").contentType(APPLICATION_JSON)
+                .content("{\"workerId\":\"worker-a\",\"maxCount\":1}"));
+
+        // Defaults to attempt -1, which never matches a real claimed attempt — a conflict, not a
+        // 400, since a missing attemptNumber isn't malformed the way a missing result is.
+        mockMvc.perform(post("/runs/" + runId + "/steps/load-model/complete")
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"workerId\":\"worker-a\",\"result\":\"success\"}"))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void returns200WhenACompletionSucceeds() throws Exception {
+        String runId = startRun();
+        mockMvc.perform(post("/runs/" + runId + "/claims").contentType(APPLICATION_JSON)
+                .content("{\"workerId\":\"worker-a\",\"maxCount\":1}"));
+
+        mockMvc.perform(post("/runs/" + runId + "/steps/load-model/complete")
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"workerId\":\"worker-a\",\"attemptNumber\":1,\"result\":\"fail\"}"))
+                .andExpect(status().isOk());
     }
 
     @Test

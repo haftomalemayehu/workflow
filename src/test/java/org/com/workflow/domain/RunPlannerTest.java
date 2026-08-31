@@ -62,6 +62,19 @@ class RunPlannerTest {
         assertThat(RunPlanner.blocked(steps, graph)).isEmpty();
     }
 
+    /**
+     * Shouldn't happen in practice — dependency edges and step instances are written together at
+     * run start — but a dependency naming a step with no matching instance must be skipped, not
+     * NPE or wrongly block the step that names it.
+     */
+    @Test
+    void aDependencyWithNoMatchingStepInstanceIsSkippedRatherThanBlocking() {
+        DependencyGraph graph = DependencyGraph.of(List.of(def("a", "ghost")));
+        List<StepInstance> steps = List.of(instance("a", StepStatus.PENDING));
+
+        assertThat(RunPlanner.blocked(steps, graph)).isEmpty();
+    }
+
     // --- claim selection (design doc §5) ---
 
     private static StepInstance pending(String id, int priority, int maxAttempts) {
@@ -130,6 +143,15 @@ class RunPlannerTest {
         DependencyGraph graph = DependencyGraph.of(List.of(def("a")));
         List<StepInstance> steps =
                 List.of(new StepInstance("a", StepStatus.PENDING, 2, 2, 1, "worker-a"));
+
+        assertThat(RunPlanner.claimable(steps, graph, 10)).isEmpty();
+    }
+
+    /** Same defensive case as {@link #aDependencyWithNoMatchingStepInstanceIsSkippedRatherThanBlocking()}, for claim eligibility. */
+    @Test
+    void doesNotClaimAStepWhoseDependencyHasNoMatchingStepInstance() {
+        DependencyGraph graph = DependencyGraph.of(List.of(def("a", "ghost")));
+        List<StepInstance> steps = List.of(pending("a", 1, 1));
 
         assertThat(RunPlanner.claimable(steps, graph, 10)).isEmpty();
     }

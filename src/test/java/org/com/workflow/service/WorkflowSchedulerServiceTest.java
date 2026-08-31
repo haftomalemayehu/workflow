@@ -125,6 +125,16 @@ class WorkflowSchedulerServiceTest {
     }
 
     @Test
+    void claimRejectsANullWorkerId() {
+        service.registerWorkflow(MODEL_PUBLISH);
+        String runId = service.startRun("model-publish", "r").run().runId();
+
+        assertThatThrownBy(() -> service.claim(runId, null, 1))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("workerId");
+    }
+
+    @Test
     void claimRejectsAnUnknownRunId() {
         assertThatThrownBy(() -> service.claim("ghost", "worker-a", 1))
                 .isInstanceOf(NotFoundException.class)
