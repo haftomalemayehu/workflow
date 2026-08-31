@@ -1,0 +1,349 @@
+openapi: 3.0.3
+info:
+  title: Persistent Workflow Scheduler
+  description: >
+    Stores workflow definitions and runs, decides which steps are ready to execute, hands them to
+    workers, and tracks retries and final outcomes. See the repository README for the full design
+    rationale and the `model-publish` walkthrough this spec's examples are drawn from.
+  version: "1.0.0"
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+servers:
+  - url: http://localhost:8080
+    description: Local (./mvnw spring-boot:run, or docker compose up)
+
+tags:
+  - name: workflows
+    description: Workflow definitions
+  - name: runs
+    description: Workflow runs, claims, and completions
+
+paths:
+  /workflows:
+    post:
+      operationId: registerWorkflow
+      tags: [workflows]
+      summary: Register a workflow definition
+      description: Re-registering an existing workflowName replaces its steps wholesale.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterWorkflowRequest'
+            example:
+              workflowName: model-publish
+              steps:
+                - stepId: load-model
+                  priority: 10
+                  maxAttempts: 1
+                  dependencies: []
+                - stepId: validate-schema
+                  priority: 9
+                  maxAttempts: 2
+                  dependencies: [load-model]
+                - stepId: write-audit
+                  priority: 5
+                  maxAttempts: 1
+                  dependencies: [load-model]
+      responses:
+        '201':
+          description: Registered
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /workflows/{workflowName}/runs:
+    post:
+      operationId: startRun
+      tags: [runs]
+      summary: Start a workflow run
+      description: >
+        Idempotent by requestId: replaying the same (workflowName, requestId) returns the existing
+        run with 200 instead of creating a second one (201).
+      parameters:
+        - $ref: '#/components/parameters/WorkflowName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartRunRequest'
+            example:
+              requestId: req-1001
+      responses:
+        '201':
+          description: Run created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunResponse'
+        '200':
+          description: Existing run replayed for a requestId already seen
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /runs/{runId}/claims:
+    post:
+      operationId: claimSteps
+      tags: [runs]
+      summary: Claim runnable steps
+      description: Returns up to maxCount steps ready to run, in priority-desc then stepId-asc order.
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimRequest'
+            example:
+              workerId: worker-a
+              maxCount: 2
+      responses:
+        '200':
+          description: Claimed steps (possibly empty)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ClaimedStep'
+              example:
+                - stepId: load-model
+                  attemptNumber: 1
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /runs/{runId}/steps/{stepId}/complete:
+    post:
+      operationId: completeStep
+      tags: [runs]
+      summary: Complete a claimed step attempt
+      description: >
+        Only the worker holding the step, on the attempt it holds, may complete it. A well-formed
+        request that names the wrong worker or attempt is a 409, not a 400 — it lost a race rather
+        than being malformed.
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+        - name: stepId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteStepRequest'
+            example:
+              workerId: worker-a
+              attemptNumber: 1
+              result: success
+      responses:
+        '200':
+          description: Completed
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /runs/{runId}:
+    get:
+      operationId: getRunSummary
+      tags: [runs]
+      summary: Get the current run summary
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: Run summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunSummaryResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  parameters:
+    WorkflowName:
+      name: workflowName
+      in: path
+      required: true
+      schema:
+        type: string
+    RunId:
+      name: runId
+      in: path
+      required: true
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: Malformed request
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    NotFound:
+      description: Unknown workflowName or runId
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    Conflict:
+      description: Well-formed request that lost a race — re-read state rather than retry as-is
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+
+  schemas:
+    StepPayload:
+      type: object
+      required: [stepId, priority, maxAttempts]
+      properties:
+        stepId:
+          type: string
+        priority:
+          type: integer
+          description: Higher runs first.
+        maxAttempts:
+          type: integer
+          minimum: 1
+          description: Includes the first attempt.
+        dependencies:
+          type: array
+          items:
+            type: string
+          default: []
+
+    RegisterWorkflowRequest:
+      type: object
+      required: [workflowName, steps]
+      properties:
+        workflowName:
+          type: string
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/StepPayload'
+
+    StartRunRequest:
+      type: object
+      required: [requestId]
+      properties:
+        requestId:
+          type: string
+
+    RunResponse:
+      type: object
+      properties:
+        runId:
+          type: string
+          format: uuid
+        workflowName:
+          type: string
+        runStatus:
+          $ref: '#/components/schemas/RunStatus'
+
+    ClaimRequest:
+      type: object
+      required: [workerId, maxCount]
+      properties:
+        workerId:
+          type: string
+        maxCount:
+          type: integer
+          minimum: 1
+
+    ClaimedStep:
+      type: object
+      properties:
+        stepId:
+          type: string
+        attemptNumber:
+          type: integer
+
+    CompleteStepRequest:
+      type: object
+      required: [workerId, attemptNumber, result]
+      properties:
+        workerId:
+          type: string
+        attemptNumber:
+          type: integer
+        result:
+          $ref: '#/components/schemas/StepResult'
+
+    StepResult:
+      type: string
+      enum: [success, fail]
+
+    RunStatus:
+      type: string
+      enum: [running, succeeded, failed]
+
+    StepStatus:
+      type: string
+      enum: [pending, in_progress, succeeded, failed, blocked]
+      description: blocked is derived — never stored, computed transitively on every read.
+
+    StepSummaryResponse:
+      type: object
+      properties:
+        stepId:
+          type: string
+        status:
+          $ref: '#/components/schemas/StepStatus'
+        attemptCount:
+          type: integer
+        lastWorkerId:
+          type: string
+          nullable: true
+
+    RunSummaryResponse:
+      type: object
+      properties:
+        runId:
+          type: string
+          format: uuid
+        workflowName:
+          type: string
+        runStatus:
+          $ref: '#/components/schemas/RunStatus'
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/StepSummaryResponse'
+          description: Sorted by stepId ascending.
+
+    ProblemDetail:
+      type: object
+      description: RFC 9457.
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri

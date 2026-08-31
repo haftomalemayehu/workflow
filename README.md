@@ -195,6 +195,12 @@ Prefer a client over raw curl? The same scenario, including the error examples, 
   Requests are numbered in the order they're meant to run; each captures `runId` from the
   start-run response for the ones after it.
 
+Prefer to read the contract itself? **[`docs/openapi/workflow-scheduler.yaml`](docs/openapi/workflow-scheduler.yaml)**
+is a hand-written OpenAPI 3.0 spec — paste it into the [Swagger Editor](https://editor.swagger.io)
+to browse and try it interactively. It's a static doc, not generated at runtime, so it stays in
+sync by hand rather than by a build dependency; the request/response shapes match `ApiPayloads` and
+`SchedulerController` exactly. It has no `security` scheme, deliberately — the API has none.
+
 ## API
 
 | Method | Path | Purpose |
