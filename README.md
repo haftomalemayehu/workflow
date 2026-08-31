@@ -83,7 +83,7 @@ tested directly and why swapping the repository for PostgreSQL leaves them untou
 
 ## Tests
 
-`./mvnw test` runs 58 tests:
+`./mvnw test` runs 62 tests:
 
 - **Unit, no Spring context** — the seven registration failures including two- and three-node
   cycles; transitive blocked propagation and un-blocking on retry; claim ordering and every
@@ -139,10 +139,13 @@ time, so while a step is `in_progress` it is also the number of the attempt curr
 makes the wrong-attempt check a single comparison and removes any ambiguity about whether an
 in-flight attempt is counted.
 
-**Definition fields are copied into each run.** `priority` and `maxAttempts` are denormalised onto
-`step_instance` at run start, so re-registering a workflow cannot retroactively change the retry
-budget of a run already in flight. A run is an immutable snapshot.
+**The definition is copied into each run.** `priority` and `maxAttempts` are denormalised onto
+`step_instance` at run start, and the dependency edges into `run_step_dependency`. Copying the
+edges is the part that is easy to miss: if the scheduler rebuilt the graph from the live definition,
+removing a dependency would instantly make an in-flight run's step runnable and adding one would
+block it. With them copied, a run is a genuine immutable snapshot.
 
 **`run_status` is a cached derivation.** It duplicates state that could be computed from the step
 rows, in exchange for making `GET /runs/{id}` a single cheap read. It is kept honest by being
-recomputed inside the same transaction as every step change.
+recomputed inside the same transaction as every step change, and at run creation — a run with no
+runnable work is terminal the moment it exists.

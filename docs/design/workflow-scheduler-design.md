@@ -31,11 +31,13 @@ Repository interfaces sit above the SQL so a PostgreSQL implementation is a drop
 
 **WorkflowRun** — `runId` (PK, UUID), `workflowName`, `requestId`, `runStatus ∈ {running, succeeded, failed}`, `createdAt`, `updatedAt`.
 
-**StepInstance** — per run: `(runId, stepId)` PK, `status`, `attemptCount`, `lastWorkerId`, plus `priority` and `maxAttempts` **copied from the definition at run start**.
+**StepInstance** — per run: `(runId, stepId)` PK, `status`, `attemptCount`, `lastWorkerId`, plus `priority` and `maxAttempts` **copied from the definition at run start**. The dependency **edges** are copied too, into `run_step_dependency`.
 
 Two modeling decisions worth calling out:
 
-**Definition fields are copied into the run, not joined.** A run is a snapshot. Re-registering a workflow later must not retroactively change the retry budget or ordering of a run already in flight.
+**The whole definition is copied into the run, not joined.** A run is a snapshot. Re-registering a workflow later must not retroactively change the retry budget, the ordering, *or the shape of the graph* for a run already in flight.
+
+The edges matter as much as the scalar fields, and are easier to overlook. If `claim` and the run summary rebuilt the graph from the live `step_dependency` table, then removing a dependency from a workflow would instantly make an in-flight run's step runnable, and adding one would block it — the run would silently change shape underneath its workers. Copying the edges into `run_step_dependency` at run start is what makes the snapshot real rather than partial.
 
 **`attemptCount` is the number of attempts *started*, and it increments at claim time.** One counter is enough. When a step is `in_progress`, `attemptCount` is the number of the attempt currently running, so the value a worker must echo back on completion is exactly `attemptCount`. This makes the wrong-attempt check a single comparison and removes any question about whether an in-flight attempt is counted.
 
@@ -168,6 +170,13 @@ CREATE TABLE step_instance (
   PRIMARY KEY (run_id, step_id));
 CREATE INDEX ix_step_claim ON step_instance(run_id, status, priority DESC, step_id);
 
+-- The run's own copy of the dependency edges (see §3).
+CREATE TABLE run_step_dependency (
+  run_id     TEXT NOT NULL,
+  step_id    TEXT NOT NULL,
+  depends_on TEXT NOT NULL,
+  PRIMARY KEY (run_id, step_id, depends_on));
+
 CREATE TABLE step_attempt_event (        -- append-only audit
   event_id       INTEGER PRIMARY KEY AUTOINCREMENT,
   run_id         TEXT NOT NULL,
@@ -178,7 +187,7 @@ CREATE TABLE step_attempt_event (        -- append-only audit
   occurred_at    TEXT NOT NULL);
 ```
 
-`run_status` is a denormalized cache recomputed in the same transaction as any step change — it keeps `GET /runs/{id}` a single cheap read while the step rows remain the source of truth.
+`run_status` is a denormalized cache recomputed in the same transaction as any step change, **and at run creation** — a run with no runnable work is terminal the moment it exists, so leaving the status uncomputed until the first transition would report a stale `running`. It keeps `GET /runs/{id}` a single cheap read while the step rows remain the source of truth.
 
 ### The claim transaction
 
@@ -263,5 +272,5 @@ Integration, real SQLite in a JUnit `@TempDir` (fresh file per test):
 
 - **SQLite serializes writes.** Correct and simple; a throughput ceiling, and the reason §9 leads with PostgreSQL.
 - **Derived `blocked`** trades a small read cost for the elimination of a whole class of cache-invalidation bugs.
-- **Copied definition fields** duplicate data in order to make runs immutable snapshots.
+- **The copied definition** — scalar fields and dependency edges alike — duplicates data in order to make runs true immutable snapshots.
 - **Cached `run_status`** duplicates derivable state for read speed, kept honest by recomputing it in the same transaction as every step change.

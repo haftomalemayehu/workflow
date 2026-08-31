@@ -81,6 +81,16 @@ public class WorkflowSchedulerService {
                         runs.findByIdempotencyKey(workflowName, requestId).orElseThrow(), false);
             }
             stepInstances.createAll(run.runId(), definition.steps());
+
+            // A run with nothing to do is already terminal; without this the stored status would
+            // stay RUNNING until some transition happened to recompute it.
+            RunStatus computed = RunPlanner.runStatus(
+                    stepInstances.findByRunId(run.runId()), graphOf(run.runId()));
+            if (computed != run.runStatus()) {
+                runs.updateStatus(run.runId(), computed);
+                return new StartRunOutcome(
+                        new WorkflowRun(run.runId(), workflowName, requestId, computed), true);
+            }
             return new StartRunOutcome(run, true);
         });
     }
@@ -97,7 +107,8 @@ public class WorkflowSchedulerService {
         }
 
         return transactions.execute(status -> {
-            DependencyGraph graph = graphOf(requireRun(runId));
+            requireRun(runId);
+            DependencyGraph graph = graphOf(runId);
             List<StepInstance> candidates =
                     RunPlanner.claimable(stepInstances.findByRunId(runId), graph, maxCount);
 
@@ -128,7 +139,8 @@ public class WorkflowSchedulerService {
         }
 
         transactions.executeWithoutResult(status -> {
-            DependencyGraph graph = graphOf(requireRun(runId));
+            requireRun(runId);
+            DependencyGraph graph = graphOf(runId);
             StepInstance step = stepInstances.findByRunId(runId).stream()
                     .filter(candidate -> candidate.stepId().equals(stepId))
                     .findFirst()
@@ -161,8 +173,8 @@ public class WorkflowSchedulerService {
         });
     }
 
-    private DependencyGraph graphOf(WorkflowRun run) {
-        return DependencyGraph.of(requireDefinition(run.workflowName()).steps());
+    private DependencyGraph graphOf(String runId) {
+        return stepInstances.findGraph(runId);
     }
 
     private void refreshRunStatus(String runId, DependencyGraph graph) {

@@ -1,5 +1,6 @@
 package org.com.workflow.persistence;
 
+import org.com.workflow.domain.DependencyGraph;
 import org.com.workflow.domain.StepDefinition;
 import org.com.workflow.domain.StepInstance;
 import org.com.workflow.domain.StepStatus;
@@ -7,7 +8,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /** Step instances, the claim compare-and-swap, and the append-only attempt log. */
 @Repository
@@ -31,7 +35,28 @@ public class JdbcStepInstanceRepository {
                             + "  last_worker_id, updated_at) VALUES (?, ?, ?, 0, ?, ?, NULL, ?)",
                     runId, step.stepId(), StepStatus.PENDING.name(),
                     step.maxAttempts(), step.priority(), now);
+
+            for (String dependency : step.dependencies()) {
+                jdbc.update("INSERT INTO run_step_dependency (run_id, step_id, depends_on)"
+                        + " VALUES (?, ?, ?)", runId, step.stepId(), dependency);
+            }
         }
+    }
+
+    /**
+     * The run's own dependency edges, copied at run start. Read from here rather than from the
+     * live definition so a later re-registration cannot steer a run already in flight.
+     */
+    public DependencyGraph findGraph(String runId) {
+        Map<String, List<String>> edges = new LinkedHashMap<>();
+        jdbc.query("SELECT step_id, depends_on FROM run_step_dependency"
+                        + " WHERE run_id = ? ORDER BY step_id, depends_on",
+                rs -> {
+                    edges.computeIfAbsent(rs.getString("step_id"), key -> new ArrayList<>())
+                            .add(rs.getString("depends_on"));
+                },
+                runId);
+        return DependencyGraph.ofEdges(edges);
     }
 
     public List<StepInstance> findByRunId(String runId) {

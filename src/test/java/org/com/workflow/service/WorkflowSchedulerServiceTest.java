@@ -4,6 +4,7 @@ import org.com.workflow.domain.ClaimedStep;
 import org.com.workflow.domain.ConflictException;
 import org.com.workflow.domain.NotFoundException;
 import org.com.workflow.domain.RunStatus;
+import org.com.workflow.domain.StartRunOutcome;
 import org.com.workflow.domain.StepDefinition;
 import org.com.workflow.domain.StepResult;
 import org.com.workflow.domain.StepStatus;
@@ -235,5 +236,61 @@ class WorkflowSchedulerServiceTest {
         String runId = service.startRun("model-publish", "r").run().runId();
         service.claim(runId, workerId, 1);
         return runId;
+    }
+
+    // --- a run is a snapshot: re-registering a workflow must not steer a run already in flight ---
+
+    @Test
+    void anInFlightRunKeepsTheDependencyEdgesItStartedWith() {
+        service.registerWorkflow(new WorkflowDefinition("wf", List.of(
+                new StepDefinition("a", 1, 1, List.of()),
+                new StepDefinition("b", 9, 1, List.of("a")))));
+        String runId = service.startRun("wf", "r").run().runId();
+
+        // b's dependency is removed after the run started; the run must not notice.
+        service.registerWorkflow(new WorkflowDefinition("wf", List.of(
+                new StepDefinition("a", 1, 1, List.of()),
+                new StepDefinition("b", 9, 1, List.of()))));
+
+        assertThat(service.claim(runId, "w", 5))
+                .extracting(ClaimedStep::stepId)
+                .containsExactly("a");
+    }
+
+    @Test
+    void anInFlightRunIsNotBlockedByADependencyAddedAfterItStarted() {
+        service.registerWorkflow(new WorkflowDefinition("wf", List.of(
+                new StepDefinition("a", 1, 1, List.of()),
+                new StepDefinition("b", 9, 1, List.of()))));
+        String runId = service.startRun("wf", "r").run().runId();
+
+        service.registerWorkflow(new WorkflowDefinition("wf", List.of(
+                new StepDefinition("a", 1, 1, List.of()),
+                new StepDefinition("b", 9, 1, List.of("a")))));
+
+        assertThat(service.claim(runId, "w", 5))
+                .extracting(ClaimedStep::stepId)
+                .containsExactly("b", "a");
+    }
+
+    // --- run status must be correct from the moment the run exists, not only after a transition ---
+
+    @Test
+    void runStatusIsComputedWhenTheRunIsCreated() {
+        service.registerWorkflow(new WorkflowDefinition("empty", List.of()));
+
+        StartRunOutcome outcome = service.startRun("empty", "r");
+
+        assertThat(outcome.run().runStatus()).isEqualTo(RunStatus.SUCCEEDED);
+        assertThat(service.runSummary(outcome.run().runId()).runStatus())
+                .isEqualTo(RunStatus.SUCCEEDED);
+    }
+
+    @Test
+    void aRunWithWorkStillToDoStartsAsRunning() {
+        service.registerWorkflow(MODEL_PUBLISH);
+
+        assertThat(service.startRun("model-publish", "r").run().runStatus())
+                .isEqualTo(RunStatus.RUNNING);
     }
 }

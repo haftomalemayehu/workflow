@@ -45,6 +45,16 @@ CREATE TABLE IF NOT EXISTS step_instance (
   PRIMARY KEY (run_id, step_id)
 );
 
+-- The run's own copy of the dependency edges. Snapshotting these alongside priority and
+-- max_attempts is what makes a run genuinely immutable: re-registering the workflow afterwards
+-- cannot change what an in-flight run considers runnable or blocked.
+CREATE TABLE IF NOT EXISTS run_step_dependency (
+  run_id     TEXT NOT NULL,
+  step_id    TEXT NOT NULL,
+  depends_on TEXT NOT NULL,
+  PRIMARY KEY (run_id, step_id, depends_on)
+);
+
 CREATE INDEX IF NOT EXISTS ix_step_claim
   ON step_instance(run_id, status, priority DESC, step_id);
 

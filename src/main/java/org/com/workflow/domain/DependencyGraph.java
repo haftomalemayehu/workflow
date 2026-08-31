@@ -21,6 +21,11 @@ public final class DependencyGraph {
         return new DependencyGraph(Map.copyOf(dependencies));
     }
 
+    /** Builds the graph straight from stored edges, as a run's snapshotted copy is loaded. */
+    public static DependencyGraph ofEdges(Map<String, List<String>> edges) {
+        return new DependencyGraph(Map.copyOf(edges));
+    }
+
     public List<String> dependenciesOf(String stepId) {
         return dependencies.getOrDefault(stepId, List.of());
     }
