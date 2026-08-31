@@ -29,8 +29,11 @@ public class JdbcWorkflowDefinitionRepository {
 
         jdbc.update("DELETE FROM step_dependency WHERE workflow_name = ?", name);
         jdbc.update("DELETE FROM step_definition WHERE workflow_name = ?", name);
-        jdbc.update("INSERT OR REPLACE INTO workflow_definition (workflow_name, created_at)"
-                + " VALUES (?, ?)", name, Instant.now().toString());
+        // ON CONFLICT ... DO UPDATE is valid upsert syntax on both SQLite (3.24+) and PostgreSQL,
+        // unlike SQLite's own "INSERT OR REPLACE" extension.
+        jdbc.update("INSERT INTO workflow_definition (workflow_name, created_at) VALUES (?, ?)"
+                + " ON CONFLICT (workflow_name) DO UPDATE SET created_at = excluded.created_at",
+                name, Instant.now().toString());
 
         for (StepDefinition step : definition.steps()) {
             jdbc.update("INSERT INTO step_definition"

@@ -1,0 +1,52 @@
+x-app-build: &app-build
+  build:
+    context: .
+    dockerfile: Dockerfile
+  ports:
+    - "8080:8080"
+
+services:
+  # Default: SQLite, matches `./mvnw spring-boot:run`. Runs with plain `docker compose up`
+  # (COMPOSE_PROFILES=sqlite in .env) and is excluded when the postgres profile is requested.
+  app:
+    <<: *app-build
+    profiles: ["sqlite"]
+    environment:
+      WORKFLOW_DB: /data/workflow.db
+    volumes:
+      - workflow-sqlite-data:/data
+
+  # Prod-like: PostgreSQL. `docker compose --profile postgres up` starts this pair instead of
+  # `app` — the --profile flag overrides .env's COMPOSE_PROFILES rather than adding to it.
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_DB: workflow
+      POSTGRES_USER: workflow
+      POSTGRES_PASSWORD: workflow
+    volumes:
+      - workflow-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U workflow -d workflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app-postgres:
+    <<: *app-build
+    profiles: ["postgres"]
+    environment:
+      SPRING_PROFILES_ACTIVE: postgres
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: workflow
+      POSTGRES_USER: workflow
+      POSTGRES_PASSWORD: workflow
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  workflow-sqlite-data:
+  workflow-postgres-data:

@@ -1,0 +1,9 @@
+target/
+*.db
+*.db-shm
+*.db-wal
+.idea/
+.vscode/
+.git/
+.mvn/wrapper/maven-wrapper.jar
+docs/

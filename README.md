@@ -18,9 +18,11 @@ That matters for the most interesting part of the problem: making step claiming 
 in-memory map, claim safety is a paragraph of prose; with SQLite it is something the code actually
 does and the tests actually exercise.
 
-Repository interfaces sit above the SQL, so swapping in PostgreSQL (and its
-`SELECT ... FOR UPDATE SKIP LOCKED` claim) is a new implementation class rather than a rewrite.
-See §9 of the design doc.
+Repository interfaces sit above the SQL, so swapping in PostgreSQL is a config change rather than a
+rewrite — see "Running it in a container" below for `docker compose --profile postgres up`. The
+claim's compare-and-swap `UPDATE` is already correct on PostgreSQL as-is; `SELECT ... FOR UPDATE
+SKIP LOCKED` (§9 of the design doc) is a future throughput optimization on top of it, not something
+needed for correctness.
 
 ## Running it
 
@@ -50,6 +52,34 @@ The database file defaults to `workflow.db` in the working directory. Override i
 ```bash
 WORKFLOW_DB=/tmp/scheduler.db ./mvnw spring-boot:run
 ```
+
+## Running it in a container
+
+```bash
+docker build -t workflow-scheduler .
+docker run -p 8080:8080 workflow-scheduler
+```
+
+It's a multi-stage build — `docker build` alone is enough, no local Maven run required first — and
+the runtime image is `eclipse-temurin:21-jre-alpine` running as a non-root user.
+
+`docker-compose.yml` wraps that with two ways to run it, switched with Compose's `profiles`
+mechanism (the repo's `.env` defaults `COMPOSE_PROFILES=sqlite`, which `--profile` overrides rather
+than adds to, so exactly one of the two ever starts):
+
+```bash
+# SQLite (default) — same behavior as ./mvnw spring-boot:run, data in a named volume
+docker compose up
+
+# PostgreSQL — prod-like: a real postgres:16-alpine container plus the app on the "postgres"
+# Spring profile, same five operations, same tests, no code changes needed
+docker compose --profile postgres up
+```
+
+Both variants publish the app on `localhost:8080`. The `postgres` profile applies
+`schema-postgresql.sql` — identical to `schema.sql` except how the auto-increment `event_id` column
+is declared, since SQLite's `AUTOINCREMENT` isn't PostgreSQL syntax — and waits for Postgres's
+healthcheck before starting the app.
 
 ## Try it with curl
 

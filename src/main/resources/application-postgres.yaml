@@ -1,0 +1,16 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:workflow}
+    username: ${POSTGRES_USER:workflow}
+    password: ${POSTGRES_PASSWORD:workflow}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      # No SQLite-style single-writer constraint here, so a normal pool size is fine.
+      maximum-pool-size: 10
+  sql:
+    init:
+      # Boot's "platform" fallback runs schema-${platform}.sql *and then* schema.sql, not one or
+      # the other — schema.sql's SQLite-only AUTOINCREMENT would still execute here. Pinning
+      # schema-locations to just the Postgres file avoids that. mode:always is inherited from
+      # application.yaml.
+      schema-locations: classpath:schema-postgresql.sql
