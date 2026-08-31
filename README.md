@@ -1,5 +1,7 @@
 # Persistent Workflow Scheduler
 
+[![CI](https://github.com/haftomalemayehu/workflow/actions/workflows/ci.yml/badge.svg)](https://github.com/haftomalemayehu/workflow/actions/workflows/ci.yml)
+
 A small backend platform service that stores workflow definitions and workflow runs, decides which
 steps are ready to execute, hands them to workers, and tracks retries and final outcomes.
 
