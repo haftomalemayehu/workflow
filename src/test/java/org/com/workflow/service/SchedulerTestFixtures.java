@@ -5,6 +5,7 @@ import org.com.workflow.domain.WorkflowDefinition;
 import org.com.workflow.persistence.JdbcStepInstanceRepository;
 import org.com.workflow.persistence.JdbcWorkflowDefinitionRepository;
 import org.com.workflow.persistence.JdbcWorkflowRunRepository;
+import org.com.workflow.persistence.PersistenceConfig;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -39,7 +40,7 @@ final class SchedulerTestFixtures {
             ScriptUtils.executeSqlScript(connection, new ClassPathResource("schema.sql"));
         }
 
-        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        JdbcTemplate jdbc = new PersistenceConfig().jdbcTemplate(dataSource);
         TransactionTemplate transactions =
                 new TransactionTemplate(new DataSourceTransactionManager(dataSource));
 

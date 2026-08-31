@@ -21,7 +21,7 @@ final class SqliteTestSupport {
         dataSource.setUrl("jdbc:sqlite:" + directory.resolve("test.db")
                 + "?transaction_mode=IMMEDIATE&busy_timeout=5000");
         applySchema(dataSource);
-        return new JdbcTemplate(dataSource);
+        return new PersistenceConfig().jdbcTemplate(dataSource);
     }
 
     private static void applySchema(DataSource dataSource) throws Exception {

@@ -2,7 +2,10 @@ spring:
   application:
     name: workflow
   datasource:
-    url: jdbc:sqlite:${WORKFLOW_DB:workflow.db}?journal_mode=WAL&busy_timeout=5000
+    # transaction_mode=IMMEDIATE takes SQLite's write lock when the transaction opens rather than
+    # on first write. Without it two concurrent claims both begin as readers, both try to upgrade,
+    # and one dies with SQLITE_BUSY — see §8 of the design doc.
+    url: jdbc:sqlite:${WORKFLOW_DB:workflow.db}?transaction_mode=IMMEDIATE&journal_mode=WAL&busy_timeout=5000
     driver-class-name: org.sqlite.JDBC
     hikari:
       # SQLite serialises writes; a small pool avoids pointless SQLITE_BUSY contention.

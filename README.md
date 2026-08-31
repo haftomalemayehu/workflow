@@ -83,7 +83,7 @@ tested directly and why swapping the repository for PostgreSQL leaves them untou
 
 ## Tests
 
-`./mvnw test` runs 62 tests:
+`./mvnw test` runs 80 tests:
 
 - **Unit, no Spring context** — the seven registration failures including two- and three-node
   cycles; transitive blocked propagation and un-blocking on retry; claim ordering and every
@@ -91,6 +91,16 @@ tested directly and why swapping the repository for PostgreSQL leaves them untou
 - **Integration, real SQLite in a JUnit `@TempDir`** — a fresh database file per test, including
   the exact scenario from the exercise brief asserted output by output.
 - **HTTP** — the status-code contract, particularly the 400 / 404 / 409 split.
+- **Concurrency** — eight threads claiming at once never receive the same step twice, and
+  concurrent `startRun` calls with one `requestId` converge on a single run.
+- **Configuration** — the shipped datasource URL must carry `transaction_mode=IMMEDIATE`. This
+  guards a defect that was real: the fixtures set it, `application.yaml` did not, and the suite was
+  green while the running app returned 500s under concurrent load.
+
+The guards were mutation-tested: removing the compare-and-swap, the block on persisting a derived
+status, or the SQLite exception translator each makes a specific test fail. Worth knowing that the
+concurrency tests prove the *transaction* boundary, not the CAS — SQLite serializes writers, so the
+CAS only becomes load-bearing on PostgreSQL and is covered separately at the repository level.
 
 Every step transition is also written to `step_attempt_event`, an append-only log, so a run's
 history can be replayed:
@@ -102,6 +112,17 @@ validate-schema  1  claimed    worker-a
 validate-schema  1  failed     worker-a
 validate-schema  2  claimed    worker-b
 ```
+
+## Follow-up discussion
+
+The brief lists four topics to be ready to discuss. Each is worked through in the design doc:
+
+| Question | Where |
+|---|---|
+| Making `ClaimRunnableSteps` safe across multiple application instances | §9, *Multi-instance claiming* — PostgreSQL `SELECT … FOR UPDATE SKIP LOCKED`; the CAS in the current claim is what survives the move |
+| Persisting state and recovering after a crash | §9, *Stuck steps and crash recovery* — a `lease_expires_at` column plus a reaper that returns expired leases to `pending` **without** consuming an attempt |
+| Observability, audit history, and replay | §9, *Observability* — `step_attempt_event` is already an append-only log, so run state can be reconstructed by folding it |
+| Timeouts, stuck steps, manual retries | §9 — the same lease-and-reaper mechanism; a manual retry is that operation triggered by an operator |
 
 ## Assumptions
 

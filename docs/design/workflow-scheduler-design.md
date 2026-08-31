@@ -220,7 +220,11 @@ Two mechanisms, deliberately layered:
 
 The completion transaction follows the same shape: `BEGIN IMMEDIATE`, load the row, run the three guards (§6), apply the transition, append the audit event, recompute `run_status`, commit.
 
-Connection settings: `journal_mode=WAL` and a `busy_timeout`, so readers never block behind a writer.
+Connection settings: `transaction_mode=IMMEDIATE`, `journal_mode=WAL` and a `busy_timeout`.
+
+The first of those is not optional decoration — it is the mechanism this whole section rests on, and it lives in a connection string rather than in code, which makes it easy to lose. It was in fact lost once: the test fixtures set it while `application.yaml` did not, so the suite stayed green while the running application returned 500s under concurrent load, exactly the upgrade deadlock described above. A test now asserts the shipped configuration carries it.
+
+One SQLite-specific wrinkle worth recording: a unique-constraint violation arrives with a **null SQLState** and vendor code 19, which Spring's default translators cannot categorise — they produce an `UncategorizedSQLException`. Since idempotent run creation catches `DuplicateKeyException` when a concurrent submitter wins the race, that catch would silently never fire, and the loser of the race would get a 500 instead of the existing run. A small `SQLExceptionTranslator` maps the code, and a test asserts the mapping.
 
 ## 9. Production evolution
 
@@ -263,6 +267,14 @@ Integration, real SQLite in a JUnit `@TempDir` (fresh file per test):
 - idempotent start: same `(workflowName, requestId)` returns the same `runId`, 201 then 200
 
 `MockMvc` tests assert the status-code contract in §7, particularly the 400 / 404 / 409 split.
+
+Concurrency:
+- eight threads claiming simultaneously never receive the same step twice, and every step ends on exactly one attempt
+- concurrent `startRun` calls sharing a `requestId` converge on a single run
+
+These prove the *transaction* boundary rather than the CAS: SQLite serializes writers, so removing the compare-and-swap does not make them fail — confirmed by mutation. The CAS is covered separately at the repository level, where a claim on a stale observation must lose. This is the honest division: the lock is what protects SQLite today, the CAS is what will protect PostgreSQL tomorrow.
+
+The guards are mutation-tested rather than assumed: removing the CAS, the block on persisting a derived status, or the exception translator each makes a specific named test fail.
 
 ## 11. Assumptions and tradeoffs
 
