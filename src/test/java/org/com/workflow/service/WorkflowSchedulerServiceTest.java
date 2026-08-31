@@ -174,6 +174,15 @@ class WorkflowSchedulerServiceTest {
                 .isInstanceOf(NotFoundException.class);
     }
 
+    @Test
+    void completeRejectsANullResult() {
+        String runId = startedRunWithLoadModelClaimedBy("worker-a");
+
+        assertThatThrownBy(() -> service.completeStep(runId, "load-model", "worker-a", 1, null))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("result");
+    }
+
     // --- retries and terminal state ---
 
     @Test

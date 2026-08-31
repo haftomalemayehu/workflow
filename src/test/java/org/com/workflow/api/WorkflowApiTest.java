@@ -166,6 +166,20 @@ class WorkflowApiTest {
     }
 
     @Test
+    void returns400WhenTheResultFieldIsMissingEntirely() throws Exception {
+        String runId = startRun();
+        mockMvc.perform(post("/runs/" + runId + "/claims").contentType(APPLICATION_JSON)
+                .content("{\"workerId\":\"worker-a\",\"maxCount\":1}"));
+
+        mockMvc.perform(post("/runs/" + runId + "/steps/load-model/complete")
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"workerId\":\"worker-a\",\"attemptNumber\":1}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail")
+                        .value(org.hamcrest.Matchers.containsString("result")));
+    }
+
+    @Test
     void returnsTheRunSummarySortedByStepId() throws Exception {
         String runId = startRun();
 
