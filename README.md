@@ -227,7 +227,7 @@ tested directly and why swapping the repository for PostgreSQL leaves them untou
 
 ## Tests
 
-`./mvnw test` runs 98 tests:
+`./mvnw test` runs 96 tests:
 
 - **Unit, no Spring context** — the seven registration failures including two- and three-node
   cycles; transitive blocked propagation and un-blocking on retry; claim ordering and every
