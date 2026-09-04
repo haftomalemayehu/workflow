@@ -184,8 +184,7 @@ public class WorkflowSchedulerService {
     public RunSummary runSummary(String runId) {
         return transactions.execute(status -> {
             WorkflowRun run = requireRun(runId);
-            WorkflowDefinition definition = requireDefinition(run.workflowName());
-            DependencyGraph graph = DependencyGraph.of(definition.steps());
+            DependencyGraph graph = graphOf(runId);
 
             List<StepInstance> steps = stepInstances.findByRunId(runId);
             Set<String> blocked = RunPlanner.blocked(steps, graph);

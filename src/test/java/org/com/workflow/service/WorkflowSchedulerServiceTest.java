@@ -292,6 +292,54 @@ class WorkflowSchedulerServiceTest {
                 .containsExactly("b", "a");
     }
 
+    /**
+     * claim() reads the run's snapshot correctly (the two tests above); runSummary() must too.
+     * b depends on a in the snapshot, and a fails, so b is blocked. Removing that dependency from
+     * the live definition afterward must not un-block b in the summary.
+     */
+    @Test
+    void runSummaryReflectsTheRunsOwnSnapshotAfterADependencyIsRemoved() {
+        service.registerWorkflow(new WorkflowDefinition("wf", List.of(
+                new StepDefinition("a", 1, 1, List.of()),
+                new StepDefinition("b", 9, 1, List.of("a")))));
+        String runId = service.startRun("wf", "r").run().runId();
+        service.claim(runId, "w", 1);
+        service.completeStep(runId, "a", "w", 1, StepResult.FAIL);
+
+        // b's dependency on a is removed after the run started; the run must not notice.
+        service.registerWorkflow(new WorkflowDefinition("wf", List.of(
+                new StepDefinition("a", 1, 1, List.of()),
+                new StepDefinition("b", 9, 1, List.of()))));
+
+        assertThat(service.runSummary(runId).steps())
+                .extracting(StepSummary::stepId, StepSummary::status)
+                .containsExactly(
+                        tuple("a", StepStatus.FAILED),
+                        tuple("b", StepStatus.BLOCKED));
+    }
+
+    /** Mirror of the above: a dependency added after the run started must not retroactively block it. */
+    @Test
+    void runSummaryReflectsTheRunsOwnSnapshotAfterADependencyIsAdded() {
+        service.registerWorkflow(new WorkflowDefinition("wf", List.of(
+                new StepDefinition("a", 9, 1, List.of()),
+                new StepDefinition("b", 1, 1, List.of()))));
+        String runId = service.startRun("wf", "r").run().runId();
+        service.claim(runId, "w", 1);
+        service.completeStep(runId, "a", "w", 1, StepResult.FAIL);
+
+        // b gains a dependency on a after the run started; the run must not notice.
+        service.registerWorkflow(new WorkflowDefinition("wf", List.of(
+                new StepDefinition("a", 9, 1, List.of()),
+                new StepDefinition("b", 1, 1, List.of("a")))));
+
+        assertThat(service.runSummary(runId).steps())
+                .extracting(StepSummary::stepId, StepSummary::status)
+                .containsExactly(
+                        tuple("a", StepStatus.FAILED),
+                        tuple("b", StepStatus.PENDING));
+    }
+
     // --- run status must be correct from the moment the run exists, not only after a transition ---
 
     @Test
